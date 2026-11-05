@@ -2,12 +2,17 @@
 # This prepares the new stack on 127.0.0.1:5482. It does not edit Caddy.
 [CmdletBinding()]
 param(
-    [string]$BaseDir = (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent),
+    [string]$BaseDir = '',
     [string]$TeacherUser = 'teacher',
     [switch]$Update
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $BaseDir) {
+    $scriptPath = $MyInvocation.MyCommand.Path
+    if (-not $scriptPath) { throw 'Cannot locate the installer script.' }
+    $BaseDir = Split-Path (Split-Path (Split-Path $scriptPath -Parent) -Parent) -Parent
+}
 $backend = Join-Path $BaseDir 'fcu-qduoj-fork'
 $frontend = Join-Path $BaseDir 'fcu-qduoj-fe-fork'
 $judge = Join-Path $BaseDir 'fcu-qduoj-judge-fork'
