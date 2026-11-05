@@ -18,19 +18,19 @@
 
 若三個儲存庫已位於 `C:\Users\chan\FcuQduOJ`，可在後端儲存庫執行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\fcu\Install-FcuClassroom.ps1`。安裝程式會產生私有隨機環境值、建置前端與兩種 C 評測容器、確認服務健康，並把信任代理範圍縮到實際偵測到的 Docker 轉送位址；**不會更改 Caddy 或目前的 80 埠站台**。初始教師密碼只在 Windows 私有的 `fcu\.env` 中；請在該主機上由授權教師讀取，勿貼到聊天、Git 或學生頁。日後更新用相同指令加 `-Update`，會先備份資料。
 
-在三個儲存庫的共同上層目錄執行；以下以 `C:\FcuQduOJ` 為例：
+在三個儲存庫的共同上層目錄執行；以下以此主機預定的 `C:\Users\chan\FcuQduOJ` 為例：
 
 ```powershell
-cd C:\FcuQduOJ\fcu-qduoj-judge-fork
+cd C:\Users\chan\FcuQduOJ\fcu-qduoj-judge-fork
 git submodule update --init --recursive
 
-cd C:\FcuQduOJ\fcu-qduoj-fe-fork
+cd C:\Users\chan\FcuQduOJ\fcu-qduoj-fe-fork
 npm install --legacy-peer-deps --no-audit
 $env:NODE_OPTIONS = '--openssl-legacy-provider'
 npm run build:dll
 npm run build
 
-cd C:\FcuQduOJ\fcu-qduoj-fork
+cd C:\Users\chan\FcuQduOJ\fcu-qduoj-fork
 Copy-Item fcu\.env.example fcu\.env
 notepad fcu\.env
 ```
@@ -75,6 +75,8 @@ http://192.168.1.8, http://100.69.46.95 {
 7. 班級擁有者可在 **Assistants** 建立或指派班級限定的助教帳號；助教只管理獲指派的班級，不取得全站管理權。請由教師設定助教初始密碼，勿把助教當作一般學生匯入名冊。
 
 若要建立既有 FCU 的 20 題 C 與 15 題選擇題題庫，先建班，再依[題庫匯入手冊](IMPORT_C_BANK_zh-TW.md)在容器內對每班執行一次。匯入後 6 份練習預設未發布，教師需驗收後逐份開放。
+
+教授另外提供的 8 題 C 範例目前只有[私人未發布草稿](PROFESSOR_C_DRAFTS_zh-TW.md)：尚未指定班級或匯入正式站。教授確認輸入／輸出約定後，部署代理才能按該文件把私人題庫檔匯入指定班級；不得把參考程式、私人測資或該檔案放進 Git、前端或可下載目錄。涉及「必須使用函式」的要求仍需教師審閱學生程式碼。
 
 ## 驗收與備份
 

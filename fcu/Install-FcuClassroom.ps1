@@ -45,6 +45,12 @@ function Get-ServiceId([string]$Service) {
     return ($ids | Where-Object { $_ } | Select-Object -First 1)
 }
 
+function Test-ExistingDatabaseVolume {
+    $volumes = @(& docker volume ls --format '{{.Name}}' --filter 'name=fcu-qduoj_postgres_data')
+    Assert-LastExit 'List database volumes'
+    return ($volumes -contains 'fcu-qduoj_postgres_data')
+}
+
 function Wait-Healthy([string]$Service, [int]$Seconds = 240) {
     $id = Get-ServiceId $Service
     if (-not $id) { throw "Container for $Service was not created." }
@@ -127,8 +133,7 @@ function Set-DetectedProxyPeer {
 
 function Backup-ExistingInstall {
     # A successful backup precedes any pull, build, migration, or container recreation.
-    & docker volume inspect 'fcu-qduoj_postgres_data' *> $null
-    if ($LASTEXITCODE -ne 0) { return }
+    if (-not (Test-ExistingDatabaseVolume)) { return }
 
     $oldBackend = Get-ServiceId 'oj-backend'
     if (-not $oldBackend) {
@@ -182,8 +187,7 @@ Ensure-Repository $frontend 'https://github.com/EthanYangTW/OnlineJudgeFE.git'
 Ensure-Repository $judge 'https://github.com/EthanYangTW/JudgeServer.git'
 
 if (-not (Test-Path $envPath)) {
-    & docker volume inspect 'fcu-qduoj_postgres_data' *> $null
-    if ($LASTEXITCODE -eq 0) {
+    if (Test-ExistingDatabaseVolume) {
         throw 'Existing database volume found but fcu\.env is missing. Restore the original environment file before proceeding.'
     }
     if ($TeacherUser -notmatch '^[A-Za-z0-9_.-]{2,64}$') { throw 'Invalid teacher login name.' }
