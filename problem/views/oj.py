@@ -1,10 +1,13 @@
 import random
 from django.db.models import Q, Count
+from django.utils import timezone
 from utils.api import APIView
 from account.decorators import check_contest_permission
 from ..models import ProblemTag, Problem, ProblemRuleType
-from ..serializers import ProblemSerializer, TagSerializer, ProblemSafeSerializer
+from ..serializers import ProblemSerializer, TagSerializer, ProblemSafeSerializer, ClassroomProblemSerializer
 from contest.models import ContestRuleType
+from fcu_classroom.access import is_classroom_teacher
+from fcu_classroom.models import ClassroomQuestion
 
 
 class ProblemTagAPI(APIView):
@@ -96,23 +99,37 @@ class ContestProblemAPI(APIView):
 
     @check_contest_permission(check_type="problems")
     def get(self, request):
+        classroom_quiz = getattr(self.contest, "fcu_quiz", None)
+        classroom_student = classroom_quiz and not is_classroom_teacher(
+            request.user, classroom_quiz.classroom)
+        problems = Problem.objects.select_related("created_by").filter(contest=self.contest, visible=True)
+        if classroom_student:
+            now = timezone.now()
+            if (not classroom_quiz.published or classroom_quiz.starts_at > now or
+                    (classroom_quiz.ends_at and now >= classroom_quiz.ends_at)):
+                return self.error("Quiz is unavailable")
+            problems = problems.filter(fcu_question__quiz=classroom_quiz,
+                                       fcu_question__kind=ClassroomQuestion.C_LAB,
+                                       fcu_question__published=True)
         problem_id = request.GET.get("problem_id")
         if problem_id:
             try:
-                problem = Problem.objects.select_related("created_by").get(_id=problem_id,
-                                                                           contest=self.contest,
-                                                                           visible=True)
+                problem = problems.get(_id=problem_id)
             except Problem.DoesNotExist:
                 return self.error("Problem does not exist.")
-            if self.contest.problem_details_permission(request.user):
+            if classroom_student:
+                problem_data = ClassroomProblemSerializer(problem).data
+            elif self.contest.problem_details_permission(request.user):
                 problem_data = ProblemSerializer(problem).data
                 self._add_problem_status(request, [problem_data, ])
             else:
                 problem_data = ProblemSafeSerializer(problem).data
             return self.success(problem_data)
 
-        contest_problems = Problem.objects.select_related("created_by").filter(contest=self.contest, visible=True)
-        if self.contest.problem_details_permission(request.user):
+        contest_problems = problems
+        if classroom_student:
+            data = ClassroomProblemSerializer(contest_problems, many=True).data
+        elif self.contest.problem_details_permission(request.user):
             data = ProblemSerializer(contest_problems, many=True).data
             self._add_problem_status(request, data)
         else:

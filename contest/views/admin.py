@@ -8,6 +8,7 @@ from django.http import FileResponse
 
 from account.decorators import check_contest_permission, ensure_created_by
 from account.models import User
+from fcu_classroom.access import is_classroom_teacher
 from submission.models import Submission, JudgeStatus
 from utils.api import APIView, validate_serializer
 from utils.cache import cache
@@ -48,6 +49,8 @@ class ContestAPI(APIView):
             ensure_created_by(contest, request.user)
         except Contest.DoesNotExist:
             return self.error("Contest does not exist")
+        if getattr(contest, "fcu_quiz", None):
+            return self.error("Edit classroom quiz timing in the classroom editor")
         data["start_time"] = dateutil.parser.parse(data["start_time"])
         data["end_time"] = dateutil.parser.parse(data["end_time"])
         if data["end_time"] <= data["start_time"]:
@@ -162,6 +165,9 @@ class ContestAnnouncementAPI(APIView):
 class ACMContestHelper(APIView):
     @check_contest_permission(check_type="ranks")
     def get(self, request):
+        classroom_quiz = getattr(self.contest, "fcu_quiz", None)
+        if classroom_quiz and not is_classroom_teacher(request.user, classroom_quiz.classroom):
+            return self.error("Only the teacher can view classroom rankings")
         ranks = ACMContestRank.objects.filter(contest=self.contest, accepted_number__gt=0) \
             .values("id", "user__username", "user__userprofile__real_name", "submission_info")
         results = []
@@ -182,9 +188,12 @@ class ACMContestHelper(APIView):
     @check_contest_permission(check_type="ranks")
     @validate_serializer(ACMContesHelperSerializer)
     def put(self, request):
+        classroom_quiz = getattr(self.contest, "fcu_quiz", None)
+        if classroom_quiz and not is_classroom_teacher(request.user, classroom_quiz.classroom):
+            return self.error("Only the teacher can edit classroom rankings")
         data = request.data
         try:
-            rank = ACMContestRank.objects.get(pk=data["rank_id"])
+            rank = ACMContestRank.objects.get(pk=data["rank_id"], contest=self.contest)
         except ACMContestRank.DoesNotExist:
             return self.error("Rank id does not exist")
         problem_rank_status = rank.submission_info.get(data["problem_id"])

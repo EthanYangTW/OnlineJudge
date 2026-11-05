@@ -18,6 +18,7 @@ from utils.cache import cache
 from utils.constants import CacheKey
 
 logger = logging.getLogger(__name__)
+JUDGE_SERVER_TIMEOUT = (3, 180)  # connect timeout, then bounded judging time
 
 
 # 继续处理在队列中的问题
@@ -61,9 +62,12 @@ class DispatcherBase(object):
         if data:
             kwargs["json"] = data
         try:
-            return requests.post(url, **kwargs).json()
-        except Exception as e:
-            logger.exception(e)
+            response = requests.post(url, timeout=JUDGE_SERVER_TIMEOUT, **kwargs)
+            response.raise_for_status()
+            return response.json()
+        except (requests.RequestException, ValueError):
+            logger.exception("Judge server request failed: %s", url)
+            return None
 
 
 class SPJCompiler(DispatcherBase):
@@ -160,16 +164,35 @@ class JudgeDispatcher(DispatcherBase):
             Submission.objects.filter(id=self.submission.id).update(result=JudgeStatus.JUDGING)
             resp = self._request(urljoin(server.service_url, "/judge"), data=data)
 
-        if not resp:
-            Submission.objects.filter(id=self.submission.id).update(result=JudgeStatus.SYSTEM_ERROR)
+        if not isinstance(resp, dict) or "err" not in resp or "data" not in resp:
+            self._save_system_error("Judge server unavailable or returned an invalid response")
             return
 
         if resp["err"]:
-            self.submission.result = JudgeStatus.COMPILE_ERROR
-            self.submission.statistic_info["err_info"] = resp["data"]
-            self.submission.statistic_info["score"] = 0
+            if resp["err"] == "CompileError":
+                self.submission.result = JudgeStatus.COMPILE_ERROR
+                self.submission.statistic_info["err_info"] = resp["data"]
+                self.submission.statistic_info["score"] = 0
+            else:
+                logger.error("Judge server failed for submission %s: %s", self.submission.id, resp["err"])
+                self._save_system_error("Judge server unavailable. Please retry")
+                return
         else:
-            resp["data"].sort(key=lambda x: int(x["test_case"]))
+            if not isinstance(resp["data"], list) or not resp["data"]:
+                self._save_system_error("Judge server returned no test results")
+                return
+            try:
+                if any(not isinstance(case, dict) or
+                       not {"test_case", "result", "cpu_time", "memory"}.issubset(case)
+                       for case in resp["data"]):
+                    raise ValueError("missing test result fields")
+                resp["data"].sort(key=lambda x: int(x["test_case"]))
+                if (self.problem.rule_type == ProblemRuleType.OI and
+                        len(resp["data"]) != len(self.problem.test_case_score)):
+                    raise ValueError("test case count mismatch")
+            except (TypeError, ValueError):
+                self._save_system_error("Judge server returned invalid test results")
+                return
             self.submission.info = resp
             self._compute_statistic_info(resp["data"])
             error_test_case = list(filter(lambda case: case["result"] != 0, resp["data"]))
@@ -184,8 +207,11 @@ class JudgeDispatcher(DispatcherBase):
         self.submission.save()
 
         if self.contest_id:
-            if self.contest.status != ContestStatus.CONTEST_UNDERWAY or \
-                    User.objects.get(id=self.submission.user_id).is_contest_admin(self.contest):
+            classroom_quiz = getattr(self.contest, "fcu_quiz", None)
+            submitted_in_window = (self.contest.start_time <= self.submission.create_time <= self.contest.end_time)
+            if ((not classroom_quiz and self.contest.status != ContestStatus.CONTEST_UNDERWAY) or
+                    (classroom_quiz and not submitted_in_window) or
+                    User.objects.get(id=self.submission.user_id).is_contest_admin(self.contest)):
                 logger.info(
                     "Contest debug mode, id: " + str(self.contest_id) + ", submission id: " + self.submission.id)
                 return
@@ -200,6 +226,13 @@ class JudgeDispatcher(DispatcherBase):
 
         # 至此判题结束，尝试处理任务队列中剩余的任务
         process_pending_task()
+
+    def _save_system_error(self, message):
+        """Infrastructure faults must not be counted as wrong student submissions."""
+        self.submission.result = JudgeStatus.SYSTEM_ERROR
+        self.submission.info = {}
+        self.submission.statistic_info = {"err_info": message}
+        self.submission.save(update_fields=["result", "info", "statistic_info"])
 
     def update_problem_status_rejudge(self):
         result = str(self.submission.result)
@@ -395,6 +428,8 @@ class JudgeDispatcher(DispatcherBase):
         problem_id = str(self.submission.problem_id)
         current_score = self.submission.statistic_info["score"]
         last_score = rank.submission_info.get(problem_id)
+        if getattr(self.contest, "fcu_quiz", None) and last_score is not None and current_score <= last_score:
+            return
         if last_score:
             rank.total_score = rank.total_score - last_score + current_score
         else:

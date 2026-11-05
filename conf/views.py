@@ -210,6 +210,8 @@ class TestCasePruneAPI(APIView):
 
 class ReleaseNotesAPI(APIView):
     def get(self, request):
+        if get_env("FCU_CLASSROOM_ONLY", "false").lower() in ("1", "true", "yes"):
+            return self.success()
         try:
             resp = requests.get("https://raw.githubusercontent.com/QingdaoU/OnlineJudge/master/docs/data.json?_=" + str(time.time()),
                                 timeout=3)

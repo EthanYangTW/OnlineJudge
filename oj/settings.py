@@ -10,7 +10,6 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/1.8/ref/settings/
 """
 import os
-import raven
 from copy import deepcopy
 from utils.shortcuts import get_env
 
@@ -20,8 +19,10 @@ if production_env:
 else:
     from .dev_settings import *
 
-with open(os.path.join(DATA_DIR, "config", "secret.key"), "r") as f:
-    SECRET_KEY = f.read()
+SECRET_KEY = os.environ.get("OJ_SECRET_KEY")
+if not SECRET_KEY:
+    with open(os.path.join(DATA_DIR, "config", "secret.key"), "r") as f:
+        SECRET_KEY = f.read()
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -37,10 +38,6 @@ VENDOR_APPS = [
     'django_dbconn_retry',
 ]
 
-if production_env:
-    VENDOR_APPS.append('raven.contrib.django.raven_compat')
-
-
 LOCAL_APPS = [
     'account',
     'announcement',
@@ -51,6 +48,7 @@ LOCAL_APPS = [
     'submission',
     'options',
     'judge',
+    'fcu_classroom.apps.FCUClassroomConfig',
 ]
 
 INSTALLED_APPS = VENDOR_APPS + LOCAL_APPS
@@ -137,7 +135,7 @@ UPLOAD_DIR = f"{DATA_DIR}{UPLOAD_PREFIX}"
 STATICFILES_DIRS = [os.path.join(DATA_DIR, "public")]
 
 
-LOGGING_HANDLERS = ['console', 'sentry'] if production_env else ['console']
+LOGGING_HANDLERS = ['console']
 LOGGING = {
    'version': 1,
    'disable_existing_loggers': False,
@@ -153,11 +151,6 @@ LOGGING = {
            'class': 'logging.StreamHandler',
            'formatter': 'standard'
        },
-       'sentry': {
-           'level': 'ERROR',
-           'class': 'raven.contrib.django.raven_compat.handlers.SentryHandler',
-           'formatter': 'standard'
-       }
    },
    'loggers': {
        'django.request': {
@@ -237,10 +230,6 @@ DRAMATIQ_RESULT_BACKEND = {
     "MIDDLEWARE_OPTIONS": {
         "result_ttl": None
     }
-}
-
-RAVEN_CONFIG = {
-    'dsn': 'https://b200023b8aed4d708fb593c5e0a6ad3d:1fddaba168f84fcf97e0d549faaeaff0@sentry.io/263057'
 }
 
 IP_HEADER = "HTTP_X_REAL_IP"

@@ -6,7 +6,7 @@ from utils.serializers import LanguageNameChoiceField
 class CreateSubmissionSerializer(serializers.Serializer):
     problem_id = serializers.IntegerField()
     language = LanguageNameChoiceField()
-    code = serializers.CharField(max_length=1024 * 1024)
+    code = serializers.CharField(max_length=1024 * 1024, trim_whitespace=False)
     contest_id = serializers.IntegerField(required=False)
     captcha = serializers.CharField(required=False)
 

@@ -1,7 +1,9 @@
 import io
+import os
 
 import xlsxwriter
 from django.http import HttpResponse
+from django.db.models import Q
 from django.utils.timezone import now
 from django.core.cache import cache
 
@@ -11,6 +13,7 @@ from utils.constants import CacheKey, CONTEST_PASSWORD_SESSION_KEY
 from utils.shortcuts import datetime2str, check_is_id
 from account.models import AdminType
 from account.decorators import login_required, check_contest_permission, check_contest_password
+from fcu_classroom.access import classroom_contest_access, is_classroom_teacher, client_ip
 
 from utils.constants import ContestRuleType, ContestStatus
 from ..models import ContestAnnouncement, Contest, OIContestRank, ACMContestRank
@@ -41,6 +44,12 @@ class ContestAPI(APIView):
             contest = Contest.objects.get(id=id, visible=True)
         except Contest.DoesNotExist:
             return self.error("Contest does not exist")
+        classroom_quiz = getattr(contest, "fcu_quiz", None)
+        if classroom_quiz:
+            if not classroom_quiz.published and not is_classroom_teacher(request.user, classroom_quiz.classroom):
+                return self.error("Contest does not exist")
+            if not classroom_contest_access(request.user, contest, client_ip(request)):
+                return self.error("Contest does not exist")
         data = ContestSerializer(contest).data
         data["now"] = datetime2str(now())
         return self.success(data)
@@ -49,6 +58,14 @@ class ContestAPI(APIView):
 class ContestListAPI(APIView):
     def get(self, request):
         contests = Contest.objects.select_related("created_by").filter(visible=True)
+        if not request.user.is_authenticated:
+            contests = contests.filter(fcu_quiz__isnull=True)
+        elif not request.user.is_super_admin():
+            contests = contests.filter(
+                Q(fcu_quiz__isnull=True) |
+                Q(fcu_quiz__classroom__teacher_id=request.user.id) |
+                Q(fcu_quiz__published=True, fcu_quiz__classroom__enrollments__user_id=request.user.id)
+            ).distinct()
         keyword = request.GET.get("keyword")
         rule_type = request.GET.get("rule_type")
         status = request.GET.get("status")
@@ -124,6 +141,12 @@ class ContestRankAPI(APIView):
 
     @check_contest_permission(check_type="ranks")
     def get(self, request):
+        if (os.environ.get("FCU_CLASSROOM_ONLY", "false").lower() in ("true", "1") and
+                not request.user.is_admin_role()):
+            return self.error("Teacher only")
+        classroom_quiz = getattr(self.contest, "fcu_quiz", None)
+        if classroom_quiz and not is_classroom_teacher(request.user, classroom_quiz.classroom):
+            return self.error("Only the teacher can view classroom rankings")
         download_csv = request.GET.get("download_csv")
         force_refresh = request.GET.get("force_refresh")
         is_contest_admin = request.user.is_authenticated and request.user.is_contest_admin(self.contest)

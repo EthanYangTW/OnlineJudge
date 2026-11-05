@@ -9,6 +9,8 @@ from utils.shortcuts import rand_str
 from judge.languages import languages
 from .models import SysOptions as SysOptionsModel
 
+FCU_MODE = os.environ.get("FCU_CLASSROOM_ONLY", "false").lower() in ("1", "true", "yes")
+
 
 class my_property:
     """
@@ -107,16 +109,16 @@ class OptionKeys:
 
 class OptionDefaultValue:
     website_base_url = "http://127.0.0.1"
-    website_name = "Online Judge"
-    website_name_shortcut = "oj"
-    website_footer = "Online Judge Footer"
+    website_name = "FCU C Classroom" if FCU_MODE else "Online Judge"
+    website_name_shortcut = "FCU C" if FCU_MODE else "oj"
+    website_footer = "FCU C Classroom" if FCU_MODE else "Online Judge Footer"
     allow_register = True
     submission_list_show_all = True
     smtp_config = {}
     judge_server_token = default_token
     throttling = {"ip": {"capacity": 100, "fill_rate": 0.1, "default_capacity": 50},
                   "user": {"capacity": 20, "fill_rate": 0.03, "default_capacity": 10}}
-    languages = languages
+    languages = [item for item in languages if item["name"] == "C"] if FCU_MODE else languages
 
 
 class _SysOptionsMeta(type):
@@ -255,7 +257,10 @@ class _SysOptionsMeta(type):
 
     @my_property(ttl=DEFAULT_SHORT_TTL)
     def languages(cls):
-        return cls._get_option(OptionKeys.languages)
+        configured = cls._get_option(OptionKeys.languages)
+        if FCU_MODE:
+            return [item for item in configured if item["name"] == "C"]
+        return configured
 
     @languages.setter
     def languages(cls, value):
@@ -274,7 +279,7 @@ class _SysOptionsMeta(type):
         return [item["name"] for item in cls.languages if "spj" in item]
 
     def reset_languages(cls):
-        cls.languages = languages
+        cls.languages = OptionDefaultValue.languages
 
 
 class SysOptions(metaclass=_SysOptionsMeta):

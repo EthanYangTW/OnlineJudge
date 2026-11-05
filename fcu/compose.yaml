@@ -1,0 +1,104 @@
+name: fcu-qduoj
+
+services:
+  oj-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: onlinejudge
+      POSTGRES_USER: onlinejudge
+      POSTGRES_PASSWORD: ${FCU_DB_PASSWORD:?Set FCU_DB_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onlinejudge -d onlinejudge"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  oj-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  oj-judge:
+    build:
+      context: ../../fcu-qduoj-judge-fork
+      dockerfile: Dockerfile.fcu-c
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [SETPCAP, MKNOD, NET_BIND_SERVICE, SYS_CHROOT, SETFCAP, FSETID]
+    tmpfs:
+      - /tmp:size=64m
+    volumes:
+      - test_cases:/test_case:ro
+      - judge_run:/judger
+      - judge_log:/log
+    environment:
+      WORKER_NUM: "4"
+      SERVICE_URL: http://oj-judge:8080
+      BACKEND_URL: http://oj-backend:8000/api/judge_server_heartbeat/
+      TOKEN: ${FCU_JUDGE_TOKEN:?Set FCU_JUDGE_TOKEN in .env}
+
+  oj-syntax:
+    build:
+      context: ../../fcu-qduoj-judge-fork
+      dockerfile: Dockerfile.fcu-c
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [SETPCAP, MKNOD, NET_BIND_SERVICE, SYS_CHROOT, SETFCAP, FSETID]
+    tmpfs:
+      - /tmp:size=64m
+      - /judger:exec,size=128m
+      - /log:size=32m
+    environment:
+      WORKER_NUM: "2"
+      FCU_SYNTAX_ONLY: "1"
+      TOKEN: ${FCU_JUDGE_TOKEN:?Set FCU_JUDGE_TOKEN in .env}
+    # No test_cases mount. Compiler diagnostics cannot read hidden tests.
+
+  oj-backend:
+    build:
+      context: ..
+      dockerfile: fcu/Dockerfile.backend
+      additional_contexts:
+        frontend: ../../fcu-qduoj-fe-fork/dist
+    restart: unless-stopped
+    depends_on:
+      oj-postgres:
+        condition: service_healthy
+      oj-redis:
+        condition: service_healthy
+    volumes:
+      - backend_data:/data
+      - test_cases:/data/test_case
+    environment:
+      POSTGRES_DB: onlinejudge
+      POSTGRES_USER: onlinejudge
+      POSTGRES_PASSWORD: ${FCU_DB_PASSWORD:?Set FCU_DB_PASSWORD in .env}
+      REDIS_HOST: oj-redis
+      JUDGE_SERVER_TOKEN: ${FCU_JUDGE_TOKEN:?Set FCU_JUDGE_TOKEN in .env}
+      LOWER_IP_HEADER: x_real_ip
+      FCU_TEACHER_USER: ${FCU_TEACHER_USER:?Set FCU_TEACHER_USER in .env}
+      FCU_TEACHER_PASSWORD: ${FCU_TEACHER_PASSWORD:?Set FCU_TEACHER_PASSWORD in .env}
+      FCU_CLASSROOM_ONLY: "true"
+      FCU_SYNTAX_SERVER_URL: http://oj-syntax:8080
+      FCU_TRUSTED_PROXY_CIDRS: ${FCU_TRUSTED_PROXY_CIDRS:-127.0.0.0/8,::1}
+      MAX_WORKER_NUM: "4"
+    ports:
+      - "${FCU_BIND:-127.0.0.1}:${FCU_HTTP_PORT:-5482}:8000"
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_data:
+  test_cases:
+  judge_run:
+  judge_log:

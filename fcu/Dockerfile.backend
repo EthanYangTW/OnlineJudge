@@ -1,0 +1,25 @@
+# Build with the backend repository as context and the compiled OnlineJudgeFE
+# dist/ directory as the named "frontend" BuildKit context.
+FROM python:3.11-slim-bookworm
+ENV OJ_ENV=production DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1
+WORKDIR /app
+
+COPY deploy/requirements.txt /app/deploy/requirements.txt
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential libpq-dev libpq5 libjpeg62-turbo-dev libjpeg62-turbo \
+      zlib1g-dev zlib1g libfreetype6 supervisor openssl nginx curl \
+    && pip install --no-cache-dir -r /app/deploy/requirements.txt \
+    && apt-get purge -y build-essential libpq-dev libjpeg62-turbo-dev zlib1g-dev \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 903 spj \
+    && useradd -u 900 -r -g spj -s /usr/sbin/nologin -M server \
+    && useradd -u 904 -r -g spj -s /usr/sbin/nologin -M nginx
+
+COPY . /app/
+COPY --from=frontend . /app/dist/
+RUN chmod +x /app/deploy/entrypoint.sh
+
+HEALTHCHECK --interval=10s CMD ["/usr/local/bin/python3", "/app/deploy/health_check.py"]
+EXPOSE 8000
+ENTRYPOINT ["/app/deploy/entrypoint.sh"]

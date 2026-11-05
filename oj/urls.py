@@ -1,6 +1,7 @@
 from django.conf.urls import include, url
 
 urlpatterns = [
+    url(r"^api/fcu/classroom/", include("fcu_classroom.urls")),
     url(r"^api/", include("account.urls.oj")),
     url(r"^api/admin/", include("account.urls.admin")),
     url(r"^api/", include("announcement.urls.oj")),

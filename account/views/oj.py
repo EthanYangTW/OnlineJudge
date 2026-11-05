@@ -28,6 +28,30 @@ from ..serializers import (TwoFactorAuthCodeSerializer, UserProfileSerializer,
 from ..tasks import send_email_async
 
 
+def fcu_classroom_only():
+    return os.environ.get("FCU_CLASSROOM_ONLY", "false").lower() in ("true", "1", "yes", "on")
+
+
+def fcu_login_allowed(user, request):
+    if not fcu_classroom_only() or user.is_admin_role():
+        return True
+    from fcu_classroom.access import classroom_access, client_ip
+    from fcu_classroom.models import ClassroomAssistant, Enrollment
+    enrollments = Enrollment.objects.select_related("classroom").filter(user=user)
+    if enrollments.exists():
+        return all(classroom_access(user, item.classroom, client_ip(request)) for item in enrollments)
+    return ClassroomAssistant.objects.filter(user=user).exists()
+
+
+def fcu_record_session(user, request):
+    if fcu_classroom_only():
+        keys = list(user.session_keys or [])
+        if request.session.session_key not in keys:
+            keys.append(request.session.session_key)
+            user.session_keys = keys
+            user.save(update_fields=["session_keys"])
+
+
 class UserProfileAPI(APIView):
     @method_decorator(ensure_csrf_cookie)
     def get(self, request, **kwargs):
@@ -39,6 +63,10 @@ class UserProfileAPI(APIView):
             return self.success()
         show_real_name = False
         username = request.GET.get("username")
+        if fcu_classroom_only() and username:
+            can_view_profile = username.casefold() == request.user.username.casefold() or request.user.is_admin_role()
+            if not can_view_profile:
+                return self.error("No permission for this profile")
         try:
             if username:
                 user = User.objects.get(username=username, is_disabled=False)
@@ -159,13 +187,30 @@ class UserLoginAPI(APIView):
         User login api
         """
         data = request.data
+        fcu_mode = fcu_classroom_only()
+        if fcu_mode:
+            from fcu_classroom.access import (clear_login_failures, client_ip, login_is_limited,
+                                              record_login_failure)
+            if client_ip(request) is None:
+                return self.error("Client address unavailable")
+            if login_is_limited(request, data["username"]):
+                return self.error("Too many login attempts; try again later", err="throttled")
         user = auth.authenticate(username=data["username"], password=data["password"])
         # None is returned if username or password is wrong
         if user:
             if user.is_disabled:
+                if fcu_mode:
+                    record_login_failure(request, data["username"])
                 return self.error("Your account has been disabled")
             if not user.two_factor_auth:
+                if not fcu_login_allowed(user, request):
+                    if fcu_mode:
+                        record_login_failure(request, data["username"])
+                    return self.error("Account unavailable for this classroom")
                 auth.login(request, user)
+                fcu_record_session(user, request)
+                if fcu_mode:
+                    clear_login_failures(request, data["username"])
                 return self.success("Succeeded")
 
             # `tfa_code` not in post data
@@ -173,11 +218,22 @@ class UserLoginAPI(APIView):
                 return self.error("tfa_required")
 
             if OtpAuth(user.tfa_token).valid_totp(data["tfa_code"]):
+                if not fcu_login_allowed(user, request):
+                    if fcu_mode:
+                        record_login_failure(request, data["username"])
+                    return self.error("Account unavailable for this classroom")
                 auth.login(request, user)
+                fcu_record_session(user, request)
+                if fcu_mode:
+                    clear_login_failures(request, data["username"])
                 return self.success("Succeeded")
             else:
+                if fcu_mode:
+                    record_login_failure(request, data["username"])
                 return self.error("Invalid two factor verification code")
         else:
+            if fcu_mode:
+                record_login_failure(request, data["username"])
             return self.error("Invalid username or password")
 
 
@@ -212,6 +268,8 @@ class UserRegisterAPI(APIView):
         """
         User register api
         """
+        if fcu_classroom_only():
+            return self.error("Registration is disabled for this classroom")
         if not SysOptions.allow_register:
             return self.error("Register function has been disabled by admin")
 
@@ -375,6 +433,9 @@ class SessionManagementAPI(APIView):
 
 class UserRankAPI(APIView):
     def get(self, request):
+        if fcu_classroom_only() and (not request.user.is_authenticated or
+                                     not request.user.is_admin_role()):
+            return self.error("Teacher only")
         rule_type = request.GET.get("rule")
         if rule_type not in ContestRuleType.choices():
             rule_type = ContestRuleType.ACM

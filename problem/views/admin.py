@@ -387,36 +387,52 @@ class ContestProblemAPI(ProblemBase):
             return self.error("Invalid rule type")
 
         problem_id = data.pop("id")
-
-        try:
-            problem = Problem.objects.get(id=problem_id, contest=contest)
-        except Problem.DoesNotExist:
-            return self.error("Problem does not exist")
-
-        _id = data["_id"]
-        if not _id:
-            return self.error("Display ID is required")
-        if Problem.objects.exclude(id=problem_id).filter(_id=_id, contest=contest).exists():
-            return self.error("Display ID already exists")
-
-        error_info = self.common_checks(request)
-        if error_info:
-            return self.error(error_info)
-        # todo check filename and score info
-        tags = data.pop("tags")
-        data["languages"] = list(data["languages"])
-
-        for k, v in data.items():
-            setattr(problem, k, v)
-        problem.save()
-
-        problem.tags.remove(*problem.tags.all())
-        for tag in tags:
+        with transaction.atomic():
             try:
-                tag = ProblemTag.objects.get(name=tag)
-            except ProblemTag.DoesNotExist:
-                tag = ProblemTag.objects.create(name=tag)
-            problem.tags.add(tag)
+                problem = Problem.objects.select_for_update().get(id=problem_id, contest=contest)
+            except Problem.DoesNotExist:
+                return self.error("Problem does not exist")
+
+            _id = data["_id"]
+            if not _id:
+                return self.error("Display ID is required")
+            if Problem.objects.exclude(id=problem_id).filter(_id=_id, contest=contest).exists():
+                return self.error("Display ID already exists")
+
+            error_info = self.common_checks(request)
+            if error_info:
+                return self.error(error_info)
+            # FCU classroom grades reference this Problem's test cases and limits.
+            # Once submitted, only text that cannot affect judging may change.
+            from fcu_classroom.models import ClassroomQuestion
+            linked = ClassroomQuestion.objects.filter(problem=problem).exists()
+            if linked and Submission.objects.filter(problem=problem).exists():
+                allowed = {"title", "description", "input_description", "output_description"}
+                current_tags = set(problem.tags.values_list("name", flat=True))
+
+                def changed(key, value):
+                    current = getattr(problem, key)
+                    if key == "hint" and current in (None, "") and value in (None, ""):
+                        return False
+                    return current != value
+                if set(data["tags"]) != current_tags or any(
+                        changed(key, value) for key, value in data.items()
+                        if key not in allowed and key != "tags"):
+                    return self.error("This C problem has submissions. Create a new problem version to change grading fields")
+
+            tags = data.pop("tags")
+            data["languages"] = list(data["languages"])
+            for key, value in data.items():
+                setattr(problem, key, value)
+            problem.save()
+
+            problem.tags.remove(*problem.tags.all())
+            for tag in tags:
+                try:
+                    tag = ProblemTag.objects.get(name=tag)
+                except ProblemTag.DoesNotExist:
+                    tag = ProblemTag.objects.create(name=tag)
+                problem.tags.add(tag)
         return self.success()
 
     def delete(self, request):
@@ -450,6 +466,10 @@ class MakeContestProblemPublicAPIView(APIView):
             problem = Problem.objects.get(id=data["id"])
         except Problem.DoesNotExist:
             return self.error("Problem does not exist")
+
+        from fcu_classroom.models import ClassroomQuestion
+        if ClassroomQuestion.objects.filter(problem=problem).exists():
+            return self.error("Classroom problems cannot be made public")
 
         if not problem.contest or problem.is_public:
             return self.error("Already be a public problem")

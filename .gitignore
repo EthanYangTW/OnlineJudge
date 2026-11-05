@@ -79,3 +79,9 @@ https_locations.conf
 venv/
 #test docker-compose
 docker-compose.yml
+fcu/.env
+.env
+**/.env
+.env.*
+**/.env.*
+!fcu/.env.example

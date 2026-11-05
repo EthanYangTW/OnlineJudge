@@ -1,7 +1,12 @@
 import ipaddress
+import os
 
+from django.db import transaction
+from django.utils import timezone
 from account.decorators import login_required, check_contest_permission
 from contest.models import ContestStatus, ContestRuleType
+from fcu_classroom.access import classroom_contest_access, is_classroom_teacher, client_ip
+from fcu_classroom.models import ClassroomQuiz, ClassroomQuestion
 from judge.tasks import judge_task
 from options.options import SysOptions
 # from judge.dispatcher import JudgeDispatcher
@@ -14,6 +19,10 @@ from ..models import Submission
 from ..serializers import (CreateSubmissionSerializer, SubmissionModelSerializer,
                            ShareSubmissionSerializer)
 from ..serializers import SubmissionSafeModelSerializer, SubmissionListSerializer
+
+
+def classroom_only_mode():
+    return os.environ.get("FCU_CLASSROOM_ONLY", "false").lower() in ("true", "1")
 
 
 class SubmissionAPI(APIView):
@@ -50,12 +59,17 @@ class SubmissionAPI(APIView):
     def post(self, request):
         data = request.data
         hide_id = False
+        classroom_quiz = None
         if data.get("contest_id"):
             error = self.check_contest_permission(request)
             if error:
                 return error
             contest = self.contest
-            if not contest.problem_details_permission(request.user):
+            classroom_quiz = getattr(contest, "fcu_quiz", None)
+            if classroom_quiz and not classroom_contest_access(
+                    request.user, contest, client_ip(request)):
+                return self.error("No classroom access for this submission")
+            if not classroom_quiz and not contest.problem_details_permission(request.user):
                 hide_id = True
 
         if data.get("captcha"):
@@ -65,19 +79,34 @@ class SubmissionAPI(APIView):
         if error:
             return self.error(error)
 
-        try:
-            problem = Problem.objects.get(id=data["problem_id"], contest_id=data.get("contest_id"), visible=True)
-        except Problem.DoesNotExist:
-            return self.error("Problem not exist")
-        if data["language"] not in problem.languages:
-            return self.error(f"{data['language']} is not allowed in the problem")
-        submission = Submission.objects.create(user_id=request.user.id,
-                                               username=request.user.username,
-                                               language=data["language"],
-                                               code=data["code"],
-                                               problem_id=problem.id,
-                                               ip=request.session["ip"],
-                                               contest_id=data.get("contest_id"))
+        with transaction.atomic():
+            if classroom_quiz:
+                quiz = ClassroomQuiz.objects.select_for_update().get(id=classroom_quiz.id)
+                teacher = is_classroom_teacher(request.user, classroom_quiz.classroom)
+                now = timezone.now()
+                if not teacher and (not quiz.published or quiz.starts_at > now or
+                                    (quiz.ends_at and now >= quiz.ends_at)):
+                    return self.error("Quiz is unavailable")
+                question = ClassroomQuestion.objects.select_for_update().filter(
+                    quiz=quiz, problem_id=data["problem_id"], kind=ClassroomQuestion.C_LAB).first()
+                if question is None or (not teacher and not question.published):
+                    return self.error("Problem not exist")
+                if data["language"] != "C" or len(data["code"].encode("utf-8")) > 16_000:
+                    return self.error("Only C source up to 16 KB is allowed")
+            problem_query = Problem.objects.select_for_update() if classroom_quiz else Problem.objects
+            try:
+                problem = problem_query.get(id=data["problem_id"], contest_id=data.get("contest_id"), visible=True)
+            except Problem.DoesNotExist:
+                return self.error("Problem not exist")
+            if data["language"] not in problem.languages:
+                return self.error(f"{data['language']} is not allowed in the problem")
+            submission = Submission.objects.create(user_id=request.user.id,
+                                                   username=request.user.username,
+                                                   language=data["language"],
+                                                   code=data["code"],
+                                                   problem_id=problem.id,
+                                                   ip=client_ip(request) if classroom_quiz else request.session["ip"],
+                                                   contest_id=data.get("contest_id"))
         # use this for debug
         # JudgeDispatcher(submission.id, problem.id).judge()
         judge_task.send(submission.id, problem.id)
@@ -95,15 +124,25 @@ class SubmissionAPI(APIView):
             submission = Submission.objects.select_related("problem").get(id=submission_id)
         except Submission.DoesNotExist:
             return self.error("Submission doesn't exist")
+        if (classroom_only_mode() and submission.user_id != request.user.id and
+                not request.user.is_admin_role()):
+            return self.error("No permission for this submission")
+        classroom_quiz = getattr(submission.contest, "fcu_quiz", None) if submission.contest_id else None
+        if classroom_quiz and not classroom_contest_access(
+                request.user, submission.contest, client_ip(request)):
+            return self.error("No classroom access for this submission")
         if not submission.check_user_permission(request.user):
             return self.error("No permission for this submission")
 
-        if submission.problem.rule_type == ProblemRuleType.OI or request.user.is_admin_role():
+        if classroom_quiz and not is_classroom_teacher(request.user, classroom_quiz.classroom):
+            submission_data = SubmissionSafeModelSerializer(submission).data
+        elif submission.problem.rule_type == ProblemRuleType.OI or request.user.is_admin_role():
             submission_data = SubmissionModelSerializer(submission).data
         else:
             submission_data = SubmissionSafeModelSerializer(submission).data
         # 是否有权限取消共享
-        submission_data["can_unshare"] = submission.check_user_permission(request.user, check_share=False)
+        submission_data["can_unshare"] = (not classroom_quiz and
+                                          submission.check_user_permission(request.user, check_share=False))
         return self.success(submission_data)
 
     @validate_serializer(ShareSubmissionSerializer)
@@ -112,10 +151,14 @@ class SubmissionAPI(APIView):
         """
         share submission
         """
+        if classroom_only_mode():
+            return self.error("Submission sharing is disabled")
         try:
             submission = Submission.objects.select_related("problem").get(id=request.data["id"])
         except Submission.DoesNotExist:
             return self.error("Submission doesn't exist")
+        if submission.contest_id and getattr(submission.contest, "fcu_quiz", None):
+            return self.error("Classroom submissions cannot be shared")
         if not submission.check_user_permission(request.user, check_share=False):
             return self.error("No permission to share the submission")
         if submission.contest and submission.contest.status == ContestStatus.CONTEST_UNDERWAY:
@@ -143,7 +186,8 @@ class SubmissionListAPI(APIView):
             except Problem.DoesNotExist:
                 return self.error("Problem doesn't exist")
             submissions = submissions.filter(problem=problem)
-        if (myself and myself == "1") or not SysOptions.submission_list_show_all:
+        if ((myself and myself == "1") or not SysOptions.submission_list_show_all or
+                (classroom_only_mode() and not (request.user.is_authenticated and request.user.is_admin_role()))):
             submissions = submissions.filter(user_id=request.user.id)
         elif username:
             submissions = submissions.filter(username__icontains=username)
@@ -162,6 +206,14 @@ class ContestSubmissionListAPI(APIView):
 
         contest = self.contest
         submissions = Submission.objects.filter(contest_id=contest.id).select_related("problem__created_by")
+        classroom_quiz = getattr(contest, "fcu_quiz", None)
+        if classroom_quiz:
+            if not classroom_contest_access(request.user, contest, client_ip(request)):
+                return self.error("No classroom access for these submissions")
+            if not is_classroom_teacher(request.user, classroom_quiz.classroom):
+                submissions = submissions.filter(user_id=request.user.id)
+        elif classroom_only_mode() and not (request.user.is_authenticated and request.user.is_admin_role()):
+            submissions = submissions.filter(user_id=request.user.id)
         problem_id = request.GET.get("problem_id")
         myself = request.GET.get("myself")
         result = request.GET.get("result")

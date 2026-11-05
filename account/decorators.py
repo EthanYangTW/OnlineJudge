@@ -113,6 +113,24 @@ def check_contest_permission(check_type="details"):
             if not user.is_authenticated:
                 return self.error("Please login first.")
 
+            classroom_quiz = getattr(self.contest, "fcu_quiz", None)
+            if classroom_quiz:
+                from fcu_classroom.access import classroom_contest_access, is_classroom_teacher, client_ip
+
+                if is_classroom_teacher(user, classroom_quiz.classroom):
+                    return func(*args, **kwargs)
+                if not classroom_quiz.published or not classroom_contest_access(
+                        user, self.contest, client_ip(request)):
+                    return self.error("No classroom access for this contest")
+                if check_type == "ranks":
+                    return self.error("Only the teacher can view classroom rankings")
+                if self.contest.status == ContestStatus.CONTEST_NOT_START and check_type != "details":
+                    return self.error("Contest has not started yet.")
+                # Students may inspect only their own submissions, even when OI ranks are hidden.
+                # ContestSubmissionListAPI applies the owner filter after this gate.
+                if check_type == "submissions":
+                    return func(*args, **kwargs)
+
             # creator or owner
             if user.is_contest_admin(self.contest):
                 return func(*args, **kwargs)

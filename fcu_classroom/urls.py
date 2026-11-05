@@ -1,0 +1,42 @@
+from django.conf.urls import url
+
+from . import social_views, views
+
+
+urlpatterns = [
+    url(r"^login/?$", views.ClassroomLoginView.as_view()),
+    url(r"^classes/?$", views.ClassroomView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/?$", views.ClassroomDetailView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/roster/?$", views.ClassroomRosterView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/assistants/?$",
+        views.ClassroomAssistantsView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/assistants/(?P<login>[A-Za-z0-9_.-]{2,64})/?$",
+        views.ClassroomAssistantView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/ip-lock/?$", views.ClassroomIPLockView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/?$", views.ClassroomQuizzesView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/scores/?$", views.ClassroomScoresView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/practice/leaderboard/?$",
+        social_views.ClassPracticeLeaderboardView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/practice/status/?$",
+        social_views.ClassPracticeStatusView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/state/?$", views.ClassroomStateView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/(?P<quiz_id>[0-9]+)/?$", views.ClassroomQuizView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/(?P<quiz_id>[0-9]+)/leaderboard/?$",
+        social_views.PracticeLeaderboardView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/(?P<quiz_id>[0-9]+)/status/?$",
+        social_views.PracticeStatusView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/(?P<quiz_id>[0-9]+)/questions/?$",
+        views.ClassroomQuestionsView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/(?P<quiz_id>[0-9]+)/questions/(?P<question_id>[0-9]+)/?$",
+        views.ClassroomQuestionView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/(?P<quiz_id>[0-9]+)/questions/(?P<question_id>[0-9]+)/draft/?$",
+        views.ClassroomDraftView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/(?P<quiz_id>[0-9]+)/questions/(?P<question_id>[0-9]+)/check/?$",
+        views.ClassroomCCheckView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/(?P<quiz_id>[0-9]+)/questions/(?P<question_id>[0-9]+)/run/?$",
+        views.ClassroomCRunView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/(?P<quiz_id>[0-9]+)/questions/(?P<question_id>[0-9]+)/submit/?$",
+        views.ClassroomMCQSubmitView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/(?P<quiz_id>[0-9]+)/submissions/?$",
+        views.ClassroomSubmissionsView.as_view()),
+]

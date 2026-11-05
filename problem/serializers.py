@@ -136,6 +136,16 @@ class ProblemSafeSerializer(BaseProblemSerializer):
                    "difficulty", "submission_number", "accepted_number", "statistic_info")
 
 
+class ClassroomProblemSerializer(serializers.ModelSerializer):
+    """Only published problem content for students; no hints or judge metadata."""
+
+    class Meta:
+        model = Problem
+        fields = ("id", "_id", "title", "description", "input_description",
+                  "output_description", "samples", "time_limit", "memory_limit",
+                  "languages", "rule_type", "io_mode", "total_score")
+
+
 class ContestProblemMakePublicSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     display_id = serializers.CharField(max_length=32)

@@ -2,3 +2,17 @@ venv
 .idea
 .git
 .DS_Store
+.env
+**/.env
+.env.*
+**/.env.*
+!fcu/.env.example
+*.csv
+**/*.csv
+*.pdf
+**/*.pdf
+data/config/
+data/test_case/
+data/ssl/
+data/log/
+data/public/upload/

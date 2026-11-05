@@ -224,7 +224,7 @@ console.log(add(1, 2))
 }
 
 languages = [
-    {"config": _c_lang_config, "name": "C", "description": "GCC 13", "content_type": "text/x-csrc",
+    {"config": _c_lang_config, "name": "C", "description": "GCC C17", "content_type": "text/x-csrc",
       "spj": {"compile": _c_lang_spj_compile, "config": _c_lang_spj_config}},
     {"config": _cpp_lang_config, "name": "C++", "description": "GCC 13", "content_type": "text/x-c++src", 
       "spj": {"compile": _cpp_lang_spj_compile, "config": _cpp_lang_spj_config}},
