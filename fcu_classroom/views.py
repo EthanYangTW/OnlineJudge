@@ -191,7 +191,7 @@ class ClassroomLoginView(View):
         try:
             data = body_data(request)
             slug, login, password = data.get("class"), data.get("login"), data.get("password")
-            if not all(isinstance(x, str) for x in (slug, login, password)):
+            if not all(isinstance(x, str) for x in (login, password)) or (slug is not None and not isinstance(slug, str)):
                 raise ValueError("Invalid credentials")
             if len(login) > 64 or len(password) > 128:
                 raise ValueError("Invalid credentials")
@@ -200,8 +200,14 @@ class ClassroomLoginView(View):
                 return fail("Client address unavailable", 503)
             if login_is_limited(request, login):
                 return fail("Too many attempts; try again later", 429)
-            classroom = Classroom.objects.filter(slug=slug).first()
             user = auth.authenticate(request, username=login, password=password)
+            if slug:
+                classroom = Classroom.objects.filter(slug=slug).first()
+            elif user is not None:
+                enrolled = list(Enrollment.objects.filter(user=user).select_related("classroom")[:2])
+                classroom = enrolled[0].classroom if len(enrolled) == 1 else None
+            else:
+                classroom = None
             if classroom is None or user is None or user.is_disabled:
                 record_login_failure(request, login)
                 return fail("Invalid credentials", 401)
@@ -225,7 +231,8 @@ class ClassroomLoginView(View):
                     keys.append(request.session.session_key)
                     locked.session_keys = keys
                     locked.save(update_fields=["session_keys"])
-            return respond({"username": user.username, "teacher": is_classroom_teacher(user, classroom),
+            return respond({"username": user.username, "class": classroom.slug,
+                            "teacher": is_classroom_teacher(user, classroom),
                             "role": class_json(classroom, user)["role"]})
         except ValueError:
             return fail("Invalid credentials", 401)

@@ -53,6 +53,19 @@ class ClassroomAPITest(TestCase):
                                                 "password": username.upper()}, ip=ip)
         return client, response
 
+    def test_student_login_finds_class_without_code(self):
+        client = Client()
+        response = self.post(client, "login/", {"login": "D1234567", "password": "D1234567"})
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["data"]["class"], "c-101")
+        self.assertEqual(client.get(self.base + "classes/c-101/state/", REMOTE_ADDR="192.168.1.5").status_code, 200)
+
+    def test_classless_login_rejects_ambiguous_enrollment(self):
+        second = Classroom.objects.create(slug="c-102", name="C 102", teacher=self.teacher)
+        Enrollment.objects.create(classroom=second, user=self.alice)
+        response = self.post(Client(), "login/", {"login": "D1234567", "password": "D1234567"})
+        self.assertEqual(response.status_code, 401)
+
     def quiz(self, mode="exam"):
         starts = timezone.now() - timedelta(minutes=1)
         payload = {"slug": mode + "-1", "title": mode.title(), "mode": mode,
