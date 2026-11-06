@@ -84,7 +84,7 @@ http://192.168.1.8, http://100.69.46.95 {
 
 ### 外網臨時驗收
 
-Windows 主機已安裝官方簽章的 `cloudflared`，以排程工作 `FCU-C-Protected-Quick-Tunnel` 將本機 `127.0.0.1:5482` 暫時連到 Cloudflare。這是**單一信箱驗收入口**，只允許 `yangethan970503@gmail.com` 用 Cloudflare Access 電子郵件一次性驗證碼進入；學生仍使用校內網址。從 Windows 私有日誌 `C:\Users\chan\FcuQduOJ\private\cloudflared-quick.log` 找 `https://...trycloudflare.com` 即為當前網址。排程工作可用 Windows 工作排程器啟動或停止；停止後外網入口立即失效。Quick Tunnel 重新建立時網址可能變更，且沒有可用性保證。不可移除 `--allowed-mail` 保護，尤其目前學生初始密碼等於學號。外網驗收完成後停止這個排程工作；若需正式外網服務，應改用具固定網域及明確存取政策的正式 Tunnel，並重新驗證登入、CSRF 與來源 IP 綁定。
+Windows 主機已安裝官方簽章的 `cloudflared`，以排程工作 `FCU-C-Public-Quick-Tunnel` 將本機 `127.0.0.1:5482` 暫時連到 Cloudflare。依班級需求，**沒有 Cloudflare 電子郵件驗證**；持有網址者可打開登入頁，學生仍須輸入學號及密碼。從 Windows 私有日誌 `C:\Users\chan\FcuQduOJ\private\cloudflared-quick.log` 找 `https://...trycloudflare.com` 即為當前網址。排程工作可用 Windows 工作排程器啟動或停止；停止後外網入口立即失效。Quick Tunnel 重新建立時網址可能變更，且沒有可用性保證。2026-11-06 應使用者要求，`fcu-c-2026` 的整班 IP 綁定已關閉，因此同一帳號可從不同網路登入。**學號亦為初始密碼，公開外網入口使知道學號的人可直接登入該學生帳號；正式使用前應改發每人不同的密碼。**若需固定網址與可靠外網服務，應改用具固定網域的正式 Tunnel。
 
 ## 驗收與備份
 
