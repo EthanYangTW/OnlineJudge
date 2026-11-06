@@ -2,29 +2,31 @@
 
 此流程供教師或部署代理操作。匯入器在執行時讀取私人題庫，不會把測資、選擇題正解、提示、詳解或參考程式碼複製到公開的 Git 儲存庫。一次指定一個**已建立的班級代碼**；不同班級可各自匯入同一題庫，並獨立設定配分、開放時間與學生。
 
+**本機現況：** Windows 伺服器 `C:\Users\chan\FcuQduOJ\private\fcu-chapter-bank-stage` 已存放篩選後的私人題庫：19 題 C Lab、15 題 C Quiz，已移除使用者指定不要的 **Add Two Numbers**。`fcu-c-2026` 班的 6 份 Chapter 練習已發布。日後建立另一班時應從該私人篩選版本匯入；下方以原始 `fcu-practice-clean` 為例的指令會重新帶入 Add Two Numbers，**不可直接照抄用於目前課堂**。
+
 ## 匯入內容與發布
 
-- 舊題庫目前有 20 題 C 標準輸入／輸出實作題、15 題 C 選擇題。匯入後分成 Chapter 2、3、4 的 C Quiz 與 C Lab，共六份 `practice` 練習。
+- 原始舊題庫有 20 題 C 標準輸入／輸出實作題、15 題 C 選擇題；本機篩選版本移除 Add Two Numbers，故為 **19 題 C、15 題選擇題**。匯入後分成 Chapter 2、3、4 的 C Quiz 與 C Lab，共六份 `practice` 練習。
 - C 題由 QingdaoU JudgeServer 評測。每題第一組測資作為學生可見的範例，其餘測資只寫到後端的私人 `/data/test_case` 卷；學生頁面看不到正解、提示、詳解或預填解法。
 - 題名會去掉開頭的題號；學生可自由切換題目。預設 C 題每題 10 分、選擇題每題 5 分。可在匯入時改預設分數，或匯入後由教師逐題修改。
 - 六份練習建立後都是**未發布**。教師須檢查題目敘述、輸入輸出、範例、配分與評測，再於教師頁逐份發布。匯入器不會自行開放學生作答。
 
 ## Windows Docker 部署：私人檔案送入後端
 
-先依 [部署交接](README_zh-TW.md)啟動三個服務儲存庫，並在教師頁建立班級。以下以班級代碼 `fcu-c-a` 與舊題庫路徑 `C:\FcuQduOJ\fcu-practice-clean` 為例；替換成實際路徑和班級代碼。PowerShell 在後端儲存庫執行：
+先依 [部署交接](README_zh-TW.md)啟動三個服務儲存庫，並在教師頁建立班級。以下以班級代碼 `fcu-c-a` 與本機篩選題庫為例；替換成實際班級代碼。PowerShell 在後端儲存庫執行：
 
 ```powershell
 cd C:\FcuQduOJ\fcu-qduoj-fork
-$old = 'C:\FcuQduOJ\fcu-practice-clean'
+$bank = 'C:\Users\chan\FcuQduOJ\private\fcu-chapter-bank-stage'
 $backendId = docker compose --env-file fcu\.env -f fcu\compose.yaml ps -q oj-backend
 if (-not $backendId) { throw 'oj-backend 尚未啟動' }
 docker compose --env-file fcu\.env -f fcu\compose.yaml exec -T -u root oj-backend sh -lc 'umask 077; mkdir -p /tmp/fcu-bank; chmod 700 /tmp/fcu-bank'
-docker cp "$old\src\lib\server\fcu\cLabs.json" "${backendId}:/tmp/fcu-bank/cLabs.json"
-docker cp "$old\src\lib\server\fcu\cQuizzes.json" "${backendId}:/tmp/fcu-bank/cQuizzes.json"
-docker cp "$old\problems" "${backendId}:/tmp/fcu-bank/problems"
+docker cp "$bank\cLabs.json" "${backendId}:/tmp/fcu-bank/cLabs.json"
+docker cp "$bank\cQuizzes.json" "${backendId}:/tmp/fcu-bank/cQuizzes.json"
+docker cp "$bank\problems" "${backendId}:/tmp/fcu-bank/problems"
 ```
 
-`problems` 目錄只供匯入器讀取公開的 Input／Output 敘述；它的其他檔案可能含解答，整個暫存目錄須維持只有 root 可進入。**不要**把舊題庫放進前端 `dist`、公開上傳目錄、Git，或發給學生。
+篩選版的 `problems` 目錄只保留公開的 Input／Output 敘述與必要的題目 ID；整個暫存目錄仍須維持只有 root 可進入，因為 `cLabs.json` 含私人測資、`cQuizzes.json` 含正解。**不要**把題庫放進前端 `dist`、公開上傳目錄、Git，或發給學生。
 
 先檢查資料，不寫入資料庫：
 
@@ -32,7 +34,7 @@ docker cp "$old\problems" "${backendId}:/tmp/fcu-bank/problems"
 docker compose --env-file fcu\.env -f fcu\compose.yaml exec -T -u root oj-backend python manage.py import_fcu_c_bank --class-slug fcu-c-a --labs /tmp/fcu-bank/cLabs.json --choices /tmp/fcu-bank/cQuizzes.json --statements-dir /tmp/fcu-bank/problems --dry-run
 ```
 
-輸出應顯示 `20 labs, 15 choices; 6 new unpublished quizzes`。確認班級代碼正確後，移除 `--dry-run` 再執行。若要自訂整批預設配分，可加 `--lab-points 20 --choice-points 4`；分數範圍是 1 至 1000。
+輸出應顯示 `19 labs, 15 choices; 6 new unpublished quizzes`。確認班級代碼正確後，移除 `--dry-run` 再執行。若要自訂整批預設配分，可加 `--lab-points 20 --choice-points 4`；分數範圍是 1 至 1000。
 
 ```powershell
 docker compose --env-file fcu\.env -f fcu\compose.yaml exec -T -u root oj-backend python manage.py import_fcu_c_bank --class-slug fcu-c-a --labs /tmp/fcu-bank/cLabs.json --choices /tmp/fcu-bank/cQuizzes.json --statements-dir /tmp/fcu-bank/problems
