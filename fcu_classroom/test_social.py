@@ -1,9 +1,11 @@
 """Practice peer activity is visible without exposing exam work or code."""
 
 import json
+import os
+import tempfile
 from datetime import timedelta
 
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
 from account.models import AdminType, ProblemPermission, User
@@ -126,6 +128,48 @@ class PracticeSocialTest(TestCase):
         self.assertTrue(any(row["quizId"] == other_practice.id for row in overview_entries))
         self.assertFalse(any(row["quizId"] == self.exam.id for row in overview_entries))
         self.assertNotIn("SECRET_OWNER_C_CODE", json.dumps(overview_status.json()["data"]))
+
+    def test_practice_judging_cases_require_own_submission_and_hide_exam_cases(self):
+        with tempfile.TemporaryDirectory() as root, override_settings(TEST_CASE_DIR=root):
+            directory = os.path.join(root, "cases")
+            os.mkdir(directory)
+            for name, content in (("1.in", "3 4 5\n"), ("1.out", "Yes\n"),
+                                  ("2.in", "2 3 4\n"), ("2.out", "No\n")):
+                with open(os.path.join(directory, name), "w", encoding="utf-8") as output:
+                    output.write(content)
+            problem = Problem.objects.create(
+                _id="A", contest=self.practice.contest, title="Triangle", description="Triangle",
+                input_description="Three sides", output_description="Yes or No", samples=[],
+                test_case_id="cases", test_case_score=[
+                    {"input_name": "1.in", "output_name": "1.out", "score": 10},
+                    {"input_name": "2.in", "output_name": "2.out", "score": 10}],
+                languages=["C"], template={}, created_by=self.teacher, time_limit=1000, memory_limit=128,
+                rule_type=ProblemRuleType.OI, difficulty="Low", total_score=20)
+            ClassroomQuestion.objects.create(quiz=self.practice, problem=problem, slug="triangle",
+                                             title="Triangle", kind=ClassroomQuestion.C_LAB, points=10)
+            submission = Submission.objects.create(
+                contest=self.practice.contest, problem=problem, user_id=self.alice.id,
+                username=self.alice.username, code="int main(void) { return 0; }", language="C",
+                result=JudgeStatus.PARTIALLY_ACCEPTED, statistic_info={"score": 10},
+                info={"data": [{"test_case": "1", "result": 0, "score": 10},
+                               {"test_case": "2", "result": -1, "score": 0}]})
+            path = self._peer_path(self.practice, "submissions/{}/tests".format(submission.id))
+            response = self.alice_client.get(path, REMOTE_ADDR="192.168.1.5")
+            self.assertEqual(response.status_code, 200, response.content)
+            data = response.json()["data"]
+            self.assertEqual((data["earned"], data["max"]), (5, 10))
+            self.assertEqual([(item["input"], item["expected"], item["verdict"])
+                              for item in data["cases"]],
+                             [("3 4 5\n", "Yes\n", 0), ("2 3 4\n", "No\n", -1)])
+            self.assertNotIn("code", json.dumps(data))
+            self.assertEqual(self.bob_client.get(path, REMOTE_ADDR="192.168.1.5").status_code, 404)
+            self.assertEqual(Client().get(path, REMOTE_ADDR="192.168.1.5").status_code, 404)
+            self.assertEqual(self.alice_client.get(
+                self._peer_path(self.exam, "submissions/{}/tests".format(submission.id)),
+                REMOTE_ADDR="192.168.1.5").status_code, 403)
+            problem.test_case_score = [{"input_name": "../escape", "output_name": "1.out", "score": 10}]
+            problem.save(update_fields=["test_case_score"])
+            self.assertEqual(self.alice_client.get(path, REMOTE_ADDR="192.168.1.5").status_code, 503)
 
     def test_exam_cross_class_and_unpublished_practice_are_private(self):
         outsider = User.objects.create(username="outsider")

@@ -10,6 +10,7 @@ import requests
 from otpauth import OtpAuth
 from django.contrib import auth
 from django.contrib.sessions.backends.cache import SessionStore
+from django.conf import settings
 from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models.functions import Coalesce
@@ -873,3 +874,68 @@ class ClassroomSubmissionsView(View):
                 row["code"] = attempt.submission.code
             rows.append(row)
         return respond(rows)
+
+
+class ClassroomPracticeTestsView(View):
+    """Reveal every graded case only for an owned practice submission."""
+
+    @staticmethod
+    def read_case_file(directory, filename):
+        if not isinstance(filename, str) or not re.fullmatch(r"[0-9]+\.(?:in|out)", filename):
+            raise ValueError("Invalid test file")
+        path = os.path.realpath(os.path.join(directory, filename))
+        if not path.startswith(directory + os.sep):
+            raise ValueError("Invalid test file")
+        with open(path, "rb") as source:
+            content = source.read(16385)
+        return content[:16384].decode("utf-8", "replace"), len(content) > 16384
+
+    def get(self, request, slug, quiz_id, submission_id):
+        classroom, quiz = get_quiz(request, slug, quiz_id)
+        if quiz is None:
+            return fail("Quiz unavailable", 404)
+        if quiz.mode != ClassroomQuiz.PRACTICE:
+            return fail("Exam test cases remain private", 403)
+        teacher = is_classroom_teacher(request.user, classroom)
+        query = ClassroomAttempt.objects.select_related("question__problem", "submission").filter(
+            question__quiz=quiz, question__kind=ClassroomQuestion.C_LAB,
+            submission_id=submission_id)
+        if not teacher:
+            query = query.filter(user=request.user, question__published=True)
+        attempt = query.first()
+        if attempt is None or (not teacher and not visible_to_student(quiz)):
+            return fail("Submission unavailable", 404)
+        submission = attempt.submission
+        if submission.result in (JudgeStatus.PENDING, JudgeStatus.JUDGING):
+            return fail("Judging is still in progress", 409)
+        problem = attempt.question.problem
+        if problem is None or problem.spj or not isinstance(problem.test_case_score, list):
+            return fail("Test data unavailable", 503)
+        case_id = problem.test_case_id
+        if not isinstance(case_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", case_id):
+            return fail("Test data unavailable", 503)
+        directory = os.path.realpath(os.path.join(settings.TEST_CASE_DIR, case_id))
+        root = os.path.realpath(settings.TEST_CASE_DIR)
+        if not directory.startswith(root + os.sep):
+            return fail("Test data unavailable", 503)
+        judged = submission.info.get("data", []) if isinstance(submission.info, dict) else []
+        judged_by_number = {str(item.get("test_case")): item for item in judged if isinstance(item, dict)} \
+            if isinstance(judged, list) else {}
+        cases = []
+        try:
+            for index, meta in enumerate(problem.test_case_score, start=1):
+                if not isinstance(meta, dict):
+                    raise ValueError("Invalid test metadata")
+                stdin, input_truncated = self.read_case_file(directory, meta.get("input_name"))
+                expected, expected_truncated = self.read_case_file(directory, meta.get("output_name"))
+                outcome = judged_by_number.get(str(index), {})
+                cases.append({"number": index, "input": stdin, "expected": expected,
+                              "inputTruncated": input_truncated, "expectedTruncated": expected_truncated,
+                              "verdict": outcome.get("result") if type(outcome.get("result")) is int else None,
+                              "earnedWeight": outcome.get("score") if type(outcome.get("score")) is int else 0,
+                              "maxWeight": meta.get("score") if type(meta.get("score")) is int else 0})
+        except (OSError, ValueError):
+            return fail("Test data unavailable", 503)
+        return respond({"submissionId": submission.id, "questionId": attempt.question_id,
+                        "earned": attempt.earned, "max": attempt.question.points,
+                        "cases": cases})

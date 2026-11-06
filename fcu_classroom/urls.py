@@ -39,4 +39,6 @@ urlpatterns = [
         views.ClassroomMCQSubmitView.as_view()),
     url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/(?P<quiz_id>[0-9]+)/submissions/?$",
         views.ClassroomSubmissionsView.as_view()),
+    url(r"^classes/(?P<slug>[a-z0-9][a-z0-9-]{1,63})/quizzes/(?P<quiz_id>[0-9]+)/submissions/(?P<submission_id>[A-Za-z0-9_-]{1,64})/tests/?$",
+        views.ClassroomPracticeTestsView.as_view()),
 ]
