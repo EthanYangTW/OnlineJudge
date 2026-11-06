@@ -124,6 +124,7 @@ function Set-DetectedProxyPeer {
     }
     if (-not $found) { $updated += 'FCU_TRUSTED_PROXY_CIDRS=' + $cidrs }
     [IO.File]::WriteAllText($envPath, ($updated -join "`n") + "`n", ([Text.UTF8Encoding]::new($false)))
+    [Environment]::SetEnvironmentVariable('FCU_TRUSTED_PROXY_CIDRS', $cidrs, 'Process')
     Protect-PrivatePath $envPath
     & docker compose @composeArgs up -d --force-recreate --no-deps oj-backend
     Assert-LastExit 'Apply the exact proxy peer to backend'
@@ -213,6 +214,25 @@ $envText = [IO.File]::ReadAllText($envPath)
 if ($envText -notmatch '(?m)^FCU_BIND=127\.0\.0\.1\r?$' -or
     $envText -notmatch '(?m)^FCU_HTTP_PORT=5482\r?$') {
     throw 'This installer requires FCU_BIND=127.0.0.1 and FCU_HTTP_PORT=5482.'
+}
+$requiredEnvKeys = @(
+    'FCU_DB_PASSWORD', 'FCU_JUDGE_TOKEN', 'FCU_TEACHER_USER',
+    'FCU_TEACHER_PASSWORD', 'FCU_BIND', 'FCU_HTTP_PORT',
+    'FCU_TRUSTED_PROXY_CIDRS'
+)
+$privateValues = @{}
+foreach ($line in (Get-Content -LiteralPath $envPath -Encoding UTF8)) {
+    if ($line -match '^([A-Z0-9_]+)=(.*)$' -and $requiredEnvKeys -contains $matches[1]) {
+        if ($privateValues.ContainsKey($matches[1])) { throw "Duplicate private setting: $($matches[1])" }
+        $privateValues[$matches[1]] = $matches[2]
+    }
+}
+foreach ($key in $requiredEnvKeys) {
+    if (-not $privateValues.ContainsKey($key) -or -not $privateValues[$key]) {
+        throw "Missing private setting: $key"
+    }
+    # Compose otherwise prefers a stale user-level Windows environment value.
+    [Environment]::SetEnvironmentVariable($key, $privateValues[$key], 'Process')
 }
 Protect-PrivatePath $envPath
 
